@@ -30,6 +30,15 @@ accept_language_re = re.compile(r'''
         (?:\s*,\s*|$)                            # Multiple accepts per header.
         ''', re.VERBOSE)
 
+def get_globalpath():
+    # GAE app-engine-patch: Fix translation support if we're in a zip file.
+    from django.conf import settings
+    globalpath = os.path.join(os.path.dirname(sys.modules[settings.__module__].__file__), 'locale')
+    if not os.path.isdir(globalpath):
+        from aecmd import COMMON_DIR
+        return os.path.join(COMMON_DIR, 'django_aep_export', 'django-locale', 'locale')
+    return globalpath
+
 def to_locale(language, to_lower=False):
     """
     Turns a language name (en-us) into a locale name (en_US). If 'to_lower' is
@@ -122,7 +131,7 @@ def translation(language):
     if sys.version_info < (2, 4):
         klass = DjangoTranslation23
 
-    globalpath = os.path.join(os.path.dirname(sys.modules[settings.__module__].__file__), 'locale')
+    globalpath = get_globalpath()
 
     if settings.SETTINGS_MODULE is not None:
         parts = settings.SETTINGS_MODULE.split('.')
@@ -327,7 +336,7 @@ def check_for_language(lang_code):
     session.
     """
     from django.conf import settings
-    globalpath = os.path.join(os.path.dirname(sys.modules[settings.__module__].__file__), 'locale')
+    globalpath = get_globalpath()
     if gettext_module.find('django', globalpath, [to_locale(lang_code)]) is not None:
         return True
     else:
@@ -342,7 +351,7 @@ def get_language_from_request(request):
     """
     global _accepted
     from django.conf import settings
-    globalpath = os.path.join(os.path.dirname(sys.modules[settings.__module__].__file__), 'locale')
+    globalpath = get_globalpath()
     supported = dict(settings.LANGUAGES)
 
     if hasattr(request, 'session'):

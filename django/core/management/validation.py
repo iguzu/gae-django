@@ -18,6 +18,8 @@ def get_validation_errors(outfile, app=None):
     validates all models of all installed apps. Writes errors, if any, to outfile.
     Returns number of errors.
     """
+    # GAE: Disable validation
+    return 0
     from django.conf import settings
     from django.db import models, connection
     from django.db.models.loading import get_app_errors

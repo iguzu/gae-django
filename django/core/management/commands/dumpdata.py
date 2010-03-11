@@ -73,8 +73,14 @@ class Command(BaseCommand):
                 model_list = get_models(app)
 
             for model in model_list:
-                if not model._meta.proxy:
-                    objects.extend(model._default_manager.all())
+                if model._meta.proxy:
+                    continue
+                key = None
+                batch = model.all().order('__key__')[:20]
+                while batch:
+                    objects.extend(batch)
+                    key = batch[-1].key()
+                    batch = model.all().filter('__key__ >', key).order('__key__')[:20]
 
         try:
             return serializers.serialize(format, objects, indent=indent)

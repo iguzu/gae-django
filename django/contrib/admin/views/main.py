@@ -3,11 +3,12 @@ from django.contrib.admin.options import IncorrectLookupParameters
 from django.contrib.admin.util import quote
 from django.core.paginator import Paginator, InvalidPage
 from django.db import models
-from django.db.models.query import QuerySet
 from django.utils.encoding import force_unicode, smart_str
 from django.utils.translation import ugettext
 from django.utils.http import urlencode
 import operator
+from copy import deepcopy
+from google.appengine.ext import db
 
 try:
     set
@@ -106,17 +107,17 @@ class ChangeList(object):
         # Perform a slight optimization: Check to see whether any filters were
         # given. If not, use paginator.hits to calculate the number of objects,
         # because we've already done paginator.hits and the value is cached.
-        if not self.query_set.query.where:
+        if False: #not self.query_set.query.where:
             full_result_count = result_count
         else:
-            full_result_count = self.root_query_set.count()
+            full_result_count = self.root_query_set.count(301)
 
         can_show_all = result_count <= MAX_SHOW_ALL_ALLOWED
         multi_page = result_count > self.list_per_page
 
         # Get the list of objects to display on this page.
         if (self.show_all and can_show_all) or not multi_page:
-            result_list = self.query_set._clone()
+            result_list = list(self.query_set.fetch(301))
         else:
             try:
                 result_list = paginator.page(self.page_num+1).object_list
@@ -136,7 +137,9 @@ class ChangeList(object):
         # options, then check the object's default ordering. If neither of
         # those exist, order descending by ID by default. Finally, look for
         # manually-specified ordering from the query string.
-        ordering = self.model_admin.ordering or lookup_opts.ordering or ['-' + lookup_opts.pk.name]
+        ordering = self.model_admin.ordering or lookup_opts.ordering
+        if not ordering:
+            return None, None
 
         if ordering[0].startswith('-'):
             order_field, order_type = ordering[0][1:], 'desc'
@@ -169,7 +172,7 @@ class ChangeList(object):
         return order_field, order_type
 
     def get_query_set(self):
-        qs = self.root_query_set
+        qs = deepcopy(self.root_query_set)
         lookup_params = self.params.copy() # a dictionary of the query string
         for i in (ALL_VAR, ORDER_VAR, ORDER_TYPE_VAR, SEARCH_VAR, IS_POPUP_VAR):
             if i in lookup_params:
@@ -181,13 +184,47 @@ class ChangeList(object):
                 del lookup_params[key]
                 lookup_params[smart_str(key)] = value
 
-            # if key ends with __in, split parameter into separate values
-            if key.endswith('__in'):
-                lookup_params[key] = value.split(',')
+        # If this property provides a SearchIndexProperty-like API
+        # we use that.
+        if self.search_fields and self.query:
+            search_field = self.search_fields[0]
+            if search_field.startswith('@'):
+                property = getattr(qs.model, search_field[1:])
+                if hasattr(property, 'search'):
+                    qs = property.search(self.query)
 
         # Apply lookup parameters from the query string.
         try:
-            qs = qs.filter(**lookup_params)
+            for key, value in lookup_params.items():
+                if '__' in key:
+                    key, op = key.split('__', 1)
+                    if op == 'gt':
+                        key = key + ' >'
+                    elif op == 'gte':
+                        key = key + ' >='
+                    elif op == 'lt':
+                        key = key + ' <'
+                    elif op == 'lte':
+                        key = key + ' >='
+                    else:
+                        if op == 'isnull':
+                            value = None
+                        elif op.startswith('key__'):
+                            value = db.Key(value)
+                        key = key + ' ='
+                else:
+                    key = key + ' ='
+                field = self.lookup_opts.get_field(key.split()[0])
+                if isinstance(field, db.BooleanProperty):
+                    if value is None:
+                        pass
+                    elif value.isdigit():
+                        value = bool(int(value))
+                    else:
+                        value = value != 'False'
+                elif isinstance(field, db.IntegerProperty):
+                    value = int(value)
+                qs.filter(key, value)
         # Naked except! Because we don't have any other way of validating "params".
         # They might be invalid if the keyword arguments are incorrect, or if the
         # values are not in the correct type, so we might get FieldError, ValueError,
@@ -199,23 +236,20 @@ class ChangeList(object):
         # Use select_related() if one of the list_display options is a field
         # with a relationship and the provided queryset doesn't already have
         # select_related defined.
-        if not qs.query.select_related:
+        # GAE: select_related not supported
+        if False and not qs.query.select_related:
             if self.list_select_related:
-                qs = qs.select_related()
+                pass
             else:
                 for field_name in self.list_display:
                     try:
                         f = self.lookup_opts.get_field(field_name)
                     except models.FieldDoesNotExist:
                         pass
-                    else:
-                        if isinstance(f.rel, models.ManyToOneRel):
-                            qs = qs.select_related()
-                            break
 
         # Set ordering.
         if self.order_field:
-            qs = qs.order_by('%s%s' % ((self.order_type == 'desc' and '-' or ''), self.order_field))
+            qs = qs.order('%s%s' % ((self.order_type == 'desc' and '-' or ''), self.order_field))
 
         # Apply keyword searches.
         def construct_search(field_name):
@@ -228,15 +262,21 @@ class ChangeList(object):
             else:
                 return "%s__icontains" % field_name
 
+        # GAE: We only support searching a single field!
         if self.search_fields and self.query:
-            for bit in self.query.split():
-                or_queries = [models.Q(**{construct_search(str(field_name)): bit}) for field_name in self.search_fields]
-                qs = qs.filter(reduce(operator.or_, or_queries))
-            for field_name in self.search_fields:
-                if '__' in field_name:
-                    qs = qs.distinct()
-                    break
-
+            search_field = self.search_fields[0]
+            if search_field.startswith('@'):
+                # If this property provides a SearchIndexProperty-like API
+                # we use that.
+                property = getattr(qs.model, search_field[1:])
+                if not hasattr(property, 'search'):
+                    # Simulate a search on a StringListProperty (should work
+                    # with SearchableModel)
+                    for bit in self.query.lower().split():
+                        qs.filter(search_field[1:] + ' =', bit)
+            else:
+                # Match query exactly
+                qs.filter(search_field.lstrip('^=') + ' =', self.query)
         return qs
 
     def url_for_result(self, result):

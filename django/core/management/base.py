@@ -43,6 +43,9 @@ def handle_default_options(options):
         os.environ['DJANGO_SETTINGS_MODULE'] = options.settings
     if options.pythonpath:
         sys.path.insert(0, options.pythonpath)
+    if options.remote:
+        from django.db import connection
+        connection.setup_remote()
 
 class BaseCommand(object):
     """
@@ -130,6 +133,8 @@ class BaseCommand(object):
             help='A directory to add to the Python path, e.g. "/home/djangoprojects/myproject".'),
         make_option('--traceback', action='store_true',
             help='Print traceback on exception'),
+        make_option('--remote', action='store_true',
+            help='Remotely access production datastore'),
     )
     help = ''
     args = ''

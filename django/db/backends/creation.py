@@ -7,7 +7,6 @@ except NameError:
     from sets import Set as set
 
 from django.conf import settings
-from django.core.management import call_command
 
 # The prefix to put on the default database name when creating
 # the test database.
@@ -333,6 +332,7 @@ class BaseDatabaseCreation(object):
         settings.DATABASE_SUPPORTS_TRANSACTIONS = can_rollback
         self.connection.settings_dict["DATABASE_SUPPORTS_TRANSACTIONS"] = can_rollback
 
+        from django.core.management import call_command
         call_command('syncdb', verbosity=verbosity, interactive=False)
 
         if settings.CACHE_BACKEND.startswith('db://'):

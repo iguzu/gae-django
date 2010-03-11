@@ -1,33 +1,75 @@
-from django.core.management.base import BaseCommand
+#!/usr/bin/python2.4
+#
+# Copyright 2008 Google Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from optparse import make_option
+
+import os
+import sys
+
+from django.db.backends.appengine.base import destroy_datastore
+from django.db.backends.appengine.base import get_test_datastore_paths
+
+from django.core.management.base import BaseCommand
+from django.core.management.commands.runserver import start_dev_appserver
+
 
 class Command(BaseCommand):
-    option_list = BaseCommand.option_list + (
-        make_option('--addrport', action='store', dest='addrport',
-            type='string', default='',
-            help='port number or ipaddr:port to run the server on'),
-    )
-    help = 'Runs a development server with data from the given fixture(s).'
-    args = '[fixture ...]'
+    """Overrides the default Django testserver command.
 
-    requires_model_validation = False
+    Instead of starting the default Django development server this command fires
+    up a copy of the full fledged appengine dev_appserver.
 
-    def handle(self, *fixture_labels, **options):
-        from django.core.management import call_command
+    The appserver is always initialised with a blank datastore with the specified
+    fixtures loaded into it.
+    """
+    help = 'Runs the development server with data from the given fixtures.'
+
+    def run_from_argv(self, argv):
+        fixtures = []
+        for arg in argv[2:]:
+            if arg.startswith('-'):
+                break
+            fixtures.append(arg)
+            argv.remove(arg)
+
+        try:
+            index = argv.index('--addrport')
+            addrport = argv[index + 1]
+            del argv[index:index+2]
+            argv = argv[:2] + [addrport] + argv[2:index] + argv[index+1:]
+        except:
+            pass
+
+        # Ensure an on-disk test datastore is used.
         from django.db import connection
+        connection.use_test_datastore = True
+        connection.test_datastore_inmemory = False
 
-        verbosity = int(options.get('verbosity', 1))
-        addrport = options.get('addrport')
+        # Flush any existing test datastore.
+        connection.flush()
 
-        # Create a test database.
-        db_name = connection.creation.create_test_db(verbosity=verbosity)
+        # Load the fixtures.
+        from django.core.management import call_command
+        call_command('loaddata', 'initial_data')
+        if fixtures:
+            call_command('loaddata', *fixtures)
 
-        # Import the fixture data into the test database.
-        call_command('loaddata', *fixture_labels, **{'verbosity': verbosity})
+        # Build new arguments for dev_appserver.
+        argv[1] = 'runserver'
+        datastore_path, history_path = get_test_datastore_paths(False)
+        argv.extend(['--datastore_path', datastore_path])
+        argv.extend(['--history_path', history_path])
 
-        # Run the development server. Turn off auto-reloading because it causes
-        # a strange error -- it causes this handle() method to be called
-        # multiple times.
-        shutdown_message = '\nServer stopped.\nNote that the test database, %r, has not been deleted. You can explore it on your own.' % db_name
-        call_command('runserver', addrport=addrport, shutdown_message=shutdown_message, use_reloader=False)
+        start_dev_appserver(argv)

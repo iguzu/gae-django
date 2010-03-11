@@ -57,7 +57,7 @@ def staff_member_required(view_func):
             message = ERROR_MESSAGE
             if '@' in username:
                 # Mistakenly entered e-mail address instead of username? Look it up.
-                users = list(User.objects.filter(email=username))
+                users = list(User.all().filter('email =', username))
                 if len(users) == 1 and users[0].check_password(password):
                     message = _("Your e-mail address is not your username. Try '%s' instead.") % users[0].username
                 else:

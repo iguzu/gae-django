@@ -1,5 +1,6 @@
 from django.core import urlresolvers, paginator
 import urllib
+from copy import deepcopy
 
 PING_URL = "http://www.google.com/webmasters/tools/ping"
 
@@ -76,9 +77,10 @@ class Sitemap(object):
 
 class FlatPageSitemap(Sitemap):
     def items(self):
+        from django.contrib.flatpages.models import FlatPage
         from django.contrib.sites.models import Site
         current_site = Site.objects.get_current()
-        return current_site.flatpage_set.all()
+        return FlatPage.all().filter('sites = ', current_site)
 
 class GenericSitemap(Sitemap):
     priority = None
@@ -92,7 +94,7 @@ class GenericSitemap(Sitemap):
 
     def items(self):
         # Make sure to return a clone; we don't want premature evaluation.
-        return self.queryset.filter()
+        return deepcopy(self.queryset)
 
     def lastmod(self, item):
         if self.date_field is not None:

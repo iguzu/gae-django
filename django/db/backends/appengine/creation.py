@@ -14,22 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-import os
-import sys
+from django.db.backends.creation import BaseDatabaseCreation
 
-from django.core.management.base import BaseCommand
+class DatabaseCreation(BaseDatabaseCreation):
+  
+  def create_test_db(self, *args, **kw):
+    """Destroys the test datastore. A new store will be recreated on demand"""
+    self.destroy_test_db()
+    self.connection.use_test_datastore = True
+    self.connection.flush()
 
-
-class Command(BaseCommand):
-    """Overrides the default Django flush command."""
-    help = 'Clears the current datastore and loads the initial fixture data.'
-
-    def run_from_argv(self, argv):
-        from django.db import connection
-        connection.flush()
-        from django.core.management import call_command
-        call_command('loaddata', 'initial_data')
-
-    def handle(self, *args, **kwargs):
-        self.run_from_argv(None)
+  def destroy_test_db(self, *args, **kw):
+    """Destroys the test datastore files."""
+    from django.db.backends.appengine.base import destroy_datastore, \
+        get_test_datastore_paths
+    destroy_datastore(*get_test_datastore_paths())

@@ -5,6 +5,8 @@ from django.contrib.admin.util import quote
 from django.utils.translation import ugettext_lazy as _
 from django.utils.encoding import smart_unicode
 from django.utils.safestring import mark_safe
+from google.appengine.ext import db
+from ragendja.dbutils import FakeModelProperty
 
 ADDITION = 1
 CHANGE = 2
@@ -12,17 +14,20 @@ DELETION = 3
 
 class LogEntryManager(models.Manager):
     def log_action(self, user_id, content_type_id, object_id, object_repr, action_flag, change_message=''):
-        e = self.model(None, None, user_id, content_type_id, smart_unicode(object_id), object_repr[:200], action_flag, change_message)
+        e = LogEntry(user=db.Key(user_id), content_type=content_type_id, object_id=smart_unicode(object_id), object_repr=object_repr[:200], action_flag=action_flag, change_message=change_message)
         e.save()
 
-class LogEntry(models.Model):
-    action_time = models.DateTimeField(_('action time'), auto_now=True)
-    user = models.ForeignKey(User)
-    content_type = models.ForeignKey(ContentType, blank=True, null=True)
-    object_id = models.TextField(_('object id'), blank=True, null=True)
-    object_repr = models.CharField(_('object repr'), max_length=200)
-    action_flag = models.PositiveSmallIntegerField(_('action flag'))
-    change_message = models.TextField(_('change message'), blank=True)
+class LogEntry(db.Model):
+    action_time = db.DateTimeProperty(required=True,
+        verbose_name=_('action time'), auto_now=True)
+    user = db.ReferenceProperty(User, required=True)
+    content_type = FakeModelProperty(ContentType)
+    object_id = db.StringProperty(verbose_name=_('object id'))
+    object_repr = db.TextProperty(required=True,
+        verbose_name=_('object repr'))
+    action_flag = db.IntegerProperty(required=True,
+        verbose_name=_('action flag'))
+    change_message = db.TextProperty(verbose_name=_('change message'))
     objects = LogEntryManager()
     class Meta:
         verbose_name = _('log entry')

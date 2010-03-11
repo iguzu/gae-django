@@ -16,6 +16,7 @@ def _get_all_permissions(opts):
     return perms + list(opts.permissions)
 
 def create_permissions(app, created_models, verbosity, **kwargs):
+    return
     from django.contrib.contenttypes.models import ContentType
     from django.contrib.auth.models import Permission
     app_models = get_models(app)

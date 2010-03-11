@@ -12,6 +12,7 @@ from django.utils.html import escape
 from django.utils.safestring import mark_safe
 from django.utils.text import capfirst
 from django.utils.translation import ugettext_lazy, ugettext as _
+from google.appengine.ext import db
 try:
     set
 except NameError:
@@ -51,12 +52,12 @@ def delete_selected(modeladmin, request, queryset):
     if request.POST.get('post'):
         if perms_needed:
             raise PermissionDenied
-        n = queryset.count()
+        n = len(queryset)
         if n:
             for obj in queryset:
                 obj_display = force_unicode(obj)
                 modeladmin.log_deletion(request, obj, obj_display)
-            queryset.delete()
+            db.delete(queryset)
             modeladmin.message_user(request, _("Successfully deleted %(count)d %(items)s.") % {
                 "count": n, "items": model_ngettext(modeladmin.opts, n)
             })

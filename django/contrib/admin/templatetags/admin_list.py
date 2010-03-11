@@ -11,6 +11,7 @@ from django.utils.translation import get_date_formats, get_partial_date_formats,
 from django.utils.encoding import smart_unicode, smart_str, force_unicode
 from django.template import Library
 import datetime
+from google.appengine.ext import db
 
 register = Library()
 
@@ -120,12 +121,13 @@ def result_headers(cl):
 
         th_classes = []
         new_order_type = 'asc'
-        if field_name == cl.order_field or admin_order_field == cl.order_field:
+        if cl.order_field and cl.order_field in (field_name, admin_order_field):
             th_classes.append('sorted %sending' % cl.order_type.lower())
             new_order_type = {'asc': 'desc', 'desc': 'asc'}[cl.order_type.lower()]
 
         yield {"text": header,
-               "sortable": True,
+               # GAE: Sorting not supported because we need too many indexes :(
+               "sortable": False,
                "url": cl.get_query_string({ORDER_VAR: i, ORDER_TYPE_VAR: new_order_type}),
                "class_attrib": mark_safe(th_classes and ' class="%s"' % ' '.join(th_classes) or '')}
 
@@ -182,20 +184,20 @@ def items_for_result(cl, result, form):
                 else:
                     result_repr = EMPTY_CHANGELIST_VALUE
             # Dates and times are special: They're formatted in a certain way.
-            elif isinstance(f, models.DateField) or isinstance(f, models.TimeField):
+            elif isinstance(f, db.DateProperty) or isinstance(f, db.TimeProperty):
                 if field_val:
                     (date_format, datetime_format, time_format) = get_date_formats()
-                    if isinstance(f, models.DateTimeField):
-                        result_repr = capfirst(dateformat.format(field_val, datetime_format))
-                    elif isinstance(f, models.TimeField):
+                    if isinstance(f, db.TimeProperty):
                         result_repr = capfirst(dateformat.time_format(field_val, time_format))
-                    else:
+                    elif isinstance(f, db.DateProperty):
                         result_repr = capfirst(dateformat.format(field_val, date_format))
+                    else:
+                        result_repr = capfirst(dateformat.format(field_val, datetime_format))
                 else:
                     result_repr = EMPTY_CHANGELIST_VALUE
                 row_class = ' class="nowrap"'
             # Booleans are special: We use images.
-            elif isinstance(f, models.BooleanField) or isinstance(f, models.NullBooleanField):
+            elif isinstance(f, db.BooleanProperty):
                 result_repr = _boolean_icon(field_val)
             # DecimalFields are special: Zero-pad the decimals.
             elif isinstance(f, models.DecimalField):
@@ -205,7 +207,7 @@ def items_for_result(cl, result, form):
                     result_repr = EMPTY_CHANGELIST_VALUE
             # Fields with choices are special: Use the representation
             # of the choice.
-            elif f.flatchoices:
+            elif f.flatchoices and isinstance(f.flatchoices[0], (tuple, list)):
                 result_repr = dict(f.flatchoices).get(field_val, EMPTY_CHANGELIST_VALUE)
             else:
                 result_repr = escape(field_val)
@@ -254,6 +256,8 @@ def result_list(cl):
 result_list = register.inclusion_tag("admin/change_list_results.html")(result_list)
 
 def date_hierarchy(cl):
+    # GAE: We can't efficiently support .dates() call on App Engine :(
+    return {}
     if cl.date_hierarchy:
         field_name = cl.date_hierarchy
         year_field = '%s__year' % field_name

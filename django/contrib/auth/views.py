@@ -13,6 +13,8 @@ from django.utils.http import urlquote, base36_to_int
 from django.utils.translation import ugettext as _
 from django.contrib.auth.models import User
 from django.views.decorators.cache import never_cache
+from google.appengine.ext import db
+from ragendja.dbutils import get_object_or_404
 
 def login(request, template_name='registration/login.html', redirect_field_name=REDIRECT_FIELD_NAME):
     "Displays the login form and handles the login action."
@@ -118,11 +120,11 @@ def password_reset_confirm(request, uidb36=None, token=None, template_name='regi
     if post_reset_redirect is None:
         post_reset_redirect = reverse('django.contrib.auth.views.password_reset_complete')
     try:
-        uid_int = base36_to_int(uidb36)
-    except ValueError:
+        uid_int = db.Key(uidb36)
+    except:
         raise Http404
 
-    user = get_object_or_404(User, id=uid_int)
+    user = get_object_or_404(User, uid_int)
     context_instance = RequestContext(request)
 
     if token_generator.check_token(user, token):

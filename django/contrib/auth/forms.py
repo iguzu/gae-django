@@ -23,9 +23,7 @@ class UserCreationForm(forms.ModelForm):
 
     def clean_username(self):
         username = self.cleaned_data["username"]
-        try:
-            User.objects.get(username=username)
-        except User.DoesNotExist:
+        if not User.all().filter('username =', username).get():
             return username
         raise forms.ValidationError(_("A user with that username already exists."))
 
@@ -47,7 +45,9 @@ class UserChangeForm(forms.ModelForm):
     username = forms.RegexField(label=_("Username"), max_length=30, regex=r'^\w+$',
         help_text = _("Required. 30 characters or fewer. Alphanumeric characters only (letters, digits and underscores)."),
         error_message = _("This value must contain only letters, numbers and underscores."))
-    
+    password = forms.CharField(label=_("Password"), widget=forms.PasswordInput,
+        help_text=_("Use '[algo]$[salt]$[hexdigest]' or use the <a href=\"password/\">change password form</a>."))
+
     class Meta:
         model = User
 
@@ -103,8 +103,8 @@ class PasswordResetForm(forms.Form):
         """
         Validates that a user exists with the given e-mail address.
         """
-        email = self.cleaned_data["email"]
-        self.users_cache = User.objects.filter(email__iexact=email)
+        email = self.cleaned_data["email"].lower()
+        self.users_cache = User.all().filter('email =', email).fetch(100)
         if len(self.users_cache) == 0:
             raise forms.ValidationError(_("That e-mail address doesn't have an associated user account. Are you sure you've registered?"))
         return email
@@ -127,7 +127,7 @@ class PasswordResetForm(forms.Form):
                 'email': user.email,
                 'domain': domain,
                 'site_name': site_name,
-                'uid': int_to_base36(user.id),
+                'uid': user.id,
                 'user': user,
                 'token': token_generator.make_token(user),
                 'protocol': use_https and 'https' or 'http',

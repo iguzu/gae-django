@@ -1,5 +1,6 @@
 from django import template
 from django.contrib.admin.models import LogEntry
+from google.appengine.ext import db
 
 register = template.Library()
 
@@ -12,12 +13,12 @@ class AdminLogNode(template.Node):
 
     def render(self, context):
         if self.user is None:
-            context[self.varname] = LogEntry.objects.all().select_related('content_type', 'user')[:self.limit]
+            context[self.varname] = LogEntry.all().order('-action_time')[:int(self.limit)]
         else:
             user_id = self.user
             if not user_id.isdigit():
-                user_id = context[self.user].id
-            context[self.varname] = LogEntry.objects.filter(user__id__exact=user_id).select_related('content_type', 'user')[:self.limit]
+                user_id = db.Key(context[self.user].id)
+            context[self.varname] = LogEntry.all().filter('user =', user_id).order('-action_time')[:int(self.limit)]
         return ''
 
 class DoGetAdminLog:

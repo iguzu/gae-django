@@ -1,10 +1,11 @@
 from django.contrib.flatpages.models import FlatPage
 from django.template import loader, RequestContext
-from django.shortcuts import get_object_or_404
+from ragendja.dbutils import get_object_or_404
 from django.http import HttpResponse, HttpResponseRedirect
 from django.conf import settings
 from django.core.xheaders import populate_xheaders
 from django.utils.safestring import mark_safe
+from google.appengine.ext import db
 
 DEFAULT_TEMPLATE = 'flatpages/default.html'
 
@@ -23,7 +24,7 @@ def flatpage(request, url):
         return HttpResponseRedirect("%s/" % request.path)
     if not url.startswith('/'):
         url = "/" + url
-    f = get_object_or_404(FlatPage, url__exact=url, sites__id__exact=settings.SITE_ID)
+    f = get_object_or_404(FlatPage, 'url =', url, 'sites = ', db.Key(settings.SITE_ID))
     # If registration is required for accessing this page, and the user isn't
     # logged in, redirect to the login page.
     if f.registration_required and not request.user.is_authenticated():

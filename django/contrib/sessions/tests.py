@@ -1,12 +1,9 @@
 r"""
 
 >>> from django.conf import settings
->>> from django.contrib.sessions.backends.db import SessionStore as DatabaseSession
+>>> from django.contrib.sessions.backends.db import SessionStore as DatabaseSession, Session
 >>> from django.contrib.sessions.backends.cache import SessionStore as CacheSession
->>> from django.contrib.sessions.backends.cached_db import SessionStore as CacheDBSession
->>> from django.contrib.sessions.backends.file import SessionStore as FileSession
 >>> from django.contrib.sessions.backends.base import SessionBase
->>> from django.contrib.sessions.models import Session
 
 >>> db_session = DatabaseSession()
 >>> db_session.modified
@@ -50,102 +47,11 @@ True
 
 # Submitting an invalid session key (either by guessing, or if the db has
 # removed the key) results in a new key being generated.
->>> Session.objects.filter(pk=db_session.session_key).delete()
+>>> old = Session.get_by_key_name('k:' + db_session.session_key)
+>>> if old: old.delete()
 >>> db_session = DatabaseSession(db_session.session_key)
 >>> db_session.save()
 >>> DatabaseSession('1').get('cat')
-
-#
-# Cached DB session tests
-#
-
->>> cdb_session = CacheDBSession()
->>> cdb_session.modified
-False
->>> cdb_session['cat'] = "dog"
->>> cdb_session.modified
-True
->>> cdb_session.pop('cat')
-'dog'
->>> cdb_session.pop('some key', 'does not exist')
-'does not exist'
->>> cdb_session.save()
->>> cdb_session.exists(cdb_session.session_key)
-True
->>> cdb_session.delete(cdb_session.session_key)
->>> cdb_session.exists(cdb_session.session_key)
-False
-
-#
-# File session tests.
-#
-
-# Do file session tests in an isolated directory, and kill it after we're done.
->>> original_session_file_path = settings.SESSION_FILE_PATH
->>> import tempfile
->>> temp_session_store = settings.SESSION_FILE_PATH = tempfile.mkdtemp()
-
->>> file_session = FileSession()
->>> file_session.modified
-False
->>> file_session['cat'] = "dog"
->>> file_session.modified
-True
->>> file_session.pop('cat')
-'dog'
->>> file_session.pop('some key', 'does not exist')
-'does not exist'
->>> file_session.save()
->>> file_session.exists(file_session.session_key)
-True
->>> file_session.delete(file_session.session_key)
->>> file_session.exists(file_session.session_key)
-False
->>> FileSession('1').get('cat')
-
->>> file_session['foo'] = 'bar'
->>> file_session.save()
->>> file_session.exists(file_session.session_key)
-True
->>> prev_key = file_session.session_key
->>> file_session.flush()
->>> file_session.exists(prev_key)
-False
->>> file_session.session_key == prev_key
-False
->>> file_session.modified, file_session.accessed
-(True, True)
->>> file_session['a'], file_session['b'] = 'c', 'd'
->>> file_session.save()
->>> prev_key = file_session.session_key
->>> prev_data = file_session.items()
->>> file_session.cycle_key()
->>> file_session.session_key == prev_key
-False
->>> file_session.items() == prev_data
-True
-
->>> Session.objects.filter(pk=file_session.session_key).delete()
->>> file_session = FileSession(file_session.session_key)
->>> file_session.save()
-
-# Make sure the file backend checks for a good storage dir
->>> settings.SESSION_FILE_PATH = "/if/this/directory/exists/you/have/a/weird/computer"
->>> FileSession()
-Traceback (innermost last):
-    ...
-ImproperlyConfigured: The session storage path '/if/this/directory/exists/you/have/a/weird/computer' doesn't exist. Please set your SESSION_FILE_PATH setting to an existing directory in which Django can store session data.
-
-# Clean up after the file tests
->>> settings.SESSION_FILE_PATH = original_session_file_path
->>> import shutil
->>> shutil.rmtree(temp_session_store)
-
-#
-# Cache-based tests
-# NB: be careful to delete any sessions created; stale sessions fill up the
-# /tmp and eventually overwhelm it after lots of runs (think buildbots)
-#
 
 >>> cache_session = CacheSession()
 >>> cache_session.modified
@@ -188,7 +94,8 @@ True
 >>> cache_session.exists(key)
 True
 
->>> Session.objects.filter(pk=cache_session.session_key).delete()
+>>> old = Session.get_by_key_name('k:' + cache_session.session_key)
+>>> if old: old.delete()
 >>> cache_session = CacheSession(cache_session.session_key)
 >>> cache_session.save()
 >>> cache_session.delete(cache_session.session_key)

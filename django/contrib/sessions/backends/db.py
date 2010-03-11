@@ -1,31 +1,34 @@
-import datetime
+from datetime import datetime
 from django.contrib.sessions.models import Session
 from django.contrib.sessions.backends.base import SessionBase, CreateError
+from django.core.cache import cache
 from django.core.exceptions import SuspiciousOperation
-from django.db import IntegrityError, transaction
 from django.utils.encoding import force_unicode
+from google.appengine.ext import db
+from ragendja.dbutils import transaction
 
 class SessionStore(SessionBase):
-    """
-    Implements database session store.
-    """
+    """A key-based session store for Google App Engine."""
+
     def load(self):
-        try:
-            s = Session.objects.get(
-                session_key = self.session_key,
-                expire_date__gt=datetime.datetime.now()
-            )
-            return self.decode(force_unicode(s.session_data))
-        except (Session.DoesNotExist, SuspiciousOperation):
-            self.create()
-            return {}
+        session = cache.get('session-' + self.session_key)
+        if session is not None:
+            return session
+        session = self._gae_get_session(self.session_key)
+        if session:
+            try:
+                session = self.decode(force_unicode(session.data))
+                cache.set('session-' + self.session_key, session, 1200)
+                return session
+            except SuspiciousOperation:
+                # Create a new session_key for extra security.
+                pass
+        self.create()
+        return {}
 
     def exists(self, session_key):
-        try:
-            Session.objects.get(session_key=session_key)
-        except Session.DoesNotExist:
-            return False
-        return True
+        return cache.get('session-' + session_key) is not None or \
+            self._gae_get_session(session_key) is not None
 
     def create(self):
         while True:
@@ -48,26 +51,35 @@ class SessionStore(SessionBase):
         create a *new* entry (as opposed to possibly updating an existing
         entry).
         """
-        obj = Session(
-            session_key = self.session_key,
-            session_data = self.encode(self._get_session(no_load=must_create)),
-            expire_date = self.get_expiry_date()
-        )
-        sid = transaction.savepoint()
-        try:
-            obj.save(force_insert=must_create)
-        except IntegrityError:
-            if must_create:
-                transaction.savepoint_rollback(sid)
-                raise CreateError
-            raise
+        self._save(must_create, self._get_session(no_load=must_create))
+
+    @transaction
+    def _save(self, must_create, session):
+        if must_create and (
+                cache.get('session-' + self.session_key) is not None or
+                Session.get_by_key_name('k:' + self.session_key)):
+            raise CreateError
+        cache.delete('session-' + self.session_key)
+        entity = Session(key_name='k:' + self.session_key,
+            data=self.encode(session),
+            expiry=self.get_expiry_date())
+        entity.put()
+        cache.set('session-' + self.session_key, session, 1200)
 
     def delete(self, session_key=None):
         if session_key is None:
             if self._session_key is None:
                 return
             session_key = self._session_key
-        try:
-            Session.objects.get(session_key=session_key).delete()
-        except Session.DoesNotExist:
-            pass
+        cache.delete('session-' + self.session_key)
+        session = self._gae_get_session(session_key)
+        if session:
+            session.delete()
+
+    def _gae_get_session(self, session_key):
+        session = Session.get_by_key_name('k:' + session_key)
+        if session:
+            if session.expiry > datetime.now():
+                return session
+            session.delete()
+        return None

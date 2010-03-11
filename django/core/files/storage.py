@@ -4,8 +4,7 @@ import urlparse
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured, SuspiciousOperation
-from django.core.files import locks, File
-from django.core.files.move import file_move_safe
+from django.core.files import File
 from django.utils.encoding import force_unicode, smart_str
 from django.utils.functional import LazyObject
 from django.utils.importlib import import_module
@@ -157,6 +156,7 @@ class FileSystemStorage(Storage):
             try:
                 # This file has a file path that we can move.
                 if hasattr(content, 'temporary_file_path'):
+                    from django.core.files.move import file_move_safe
                     file_move_safe(content.temporary_file_path(), full_path)
                     content.close()
 
@@ -166,6 +166,7 @@ class FileSystemStorage(Storage):
                     # OSError if the file already exists before we open it.
                     fd = os.open(full_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_BINARY', 0))
                     try:
+                        from django.core.files import locks
                         locks.lock(fd, locks.LOCK_EX)
                         for chunk in content.chunks():
                             os.write(fd, chunk)

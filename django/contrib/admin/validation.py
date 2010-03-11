@@ -8,6 +8,7 @@ from django.db import models
 from django.forms.models import BaseModelForm, BaseModelFormSet, fields_for_model, _get_foreign_key
 from django.contrib.admin.options import flatten_fieldsets, BaseModelAdmin
 from django.contrib.admin.options import HORIZONTAL, VERTICAL
+from google.appengine.ext import db
 
 __all__ = ['validate']
 
@@ -39,8 +40,8 @@ def validate(cls, model):
                     else:
                         # getattr(model, field) could be an X_RelatedObjectsDescriptor
                         f = fetch_attr(cls, model, opts, "list_display[%d]" % idx, field)
-                        if isinstance(f, models.ManyToManyField):
-                            raise ImproperlyConfigured("'%s.list_display[%d]', '%s' is a ManyToManyField which is not supported."
+                        if isinstance(f, db.ListProperty):
+                            raise ImproperlyConfigured("'%s.list_display[%d]', '%s' is a ListProperty which is not supported."
                                 % (cls.__name__, idx, field))
 
     # list_display_links
@@ -99,9 +100,10 @@ def validate(cls, model):
     # date_hierarchy = None
     if cls.date_hierarchy:
         f = get_field(cls, model, opts, 'date_hierarchy', cls.date_hierarchy)
-        if not isinstance(f, (models.DateField, models.DateTimeField)):
+        if not isinstance(f, (db.DateProperty, db.DateTimeProperty)) or \
+                isinstance(f, db.TimeProperty):
             raise ImproperlyConfigured("'%s.date_hierarchy is "
-                    "neither an instance of DateField nor DateTimeField."
+                    "neither an instance of DateProperty nor DateTimeProperty."
                     % cls.__name__)
 
     # ordering = None
@@ -142,9 +144,9 @@ def validate(cls, model):
             if not inline.model:
                 raise ImproperlyConfigured("'model' is a required attribute "
                         "of '%s.inlines[%d]'." % (cls.__name__, idx))
-            if not issubclass(inline.model, models.Model):
+            if not issubclass(inline.model, db.Model):
                 raise ImproperlyConfigured("'%s.inlines[%d].model' does not "
-                        "inherit from models.Model." % (cls.__name__, idx))
+                        "inherit from db.Model." % (cls.__name__, idx))
             validate_base(inline, inline.model)
             validate_inline(inline, cls, model)
 
@@ -152,9 +154,9 @@ def validate_inline(cls, parent, parent_model):
     # model is already verified to exist and be a Model
     if cls.fk_name: # default value is None
         f = get_field(cls, cls.model, cls.model._meta, 'fk_name', cls.fk_name)
-        if not isinstance(f, models.ForeignKey):
+        if not isinstance(f, db.ReferenceProperty):
             raise ImproperlyConfigured("'%s.fk_name is not an instance of "
-                    "models.ForeignKey." % cls.__name__)
+                    "db.ReferenceProperty." % cls.__name__)
     # extra = 3
     # max_num = 0
     for attr in ('extra', 'max_num'):
@@ -183,9 +185,9 @@ def validate_base(cls, model):
         check_isseq(cls, 'raw_id_fields', cls.raw_id_fields)
         for idx, field in enumerate(cls.raw_id_fields):
             f = get_field(cls, model, opts, 'raw_id_fields', field)
-            if not isinstance(f, (models.ForeignKey, models.ManyToManyField)):
+            if not hasattr(f, 'reference_class'):
                 raise ImproperlyConfigured("'%s.raw_id_fields[%d]', '%s' must "
-                        "be either a ForeignKey or ManyToManyField."
+                        "be either a ReferenceProperty or ListProperty."
                         % (cls.__name__, idx, field))
 
     # fields
@@ -227,27 +229,27 @@ def validate_base(cls, model):
         check_isseq(cls, 'filter_vertical', cls.filter_vertical)
         for idx, field in enumerate(cls.filter_vertical):
             f = get_field(cls, model, opts, 'filter_vertical', field)
-            if not isinstance(f, models.ManyToManyField):
+            if not isinstance(f, db.ListProperty):
                 raise ImproperlyConfigured("'%s.filter_vertical[%d]' must be "
-                    "a ManyToManyField." % (cls.__name__, idx))
+                    "a ListProperty." % (cls.__name__, idx))
 
     # filter_horizontal
     if hasattr(cls, 'filter_horizontal'):
         check_isseq(cls, 'filter_horizontal', cls.filter_horizontal)
         for idx, field in enumerate(cls.filter_horizontal):
             f = get_field(cls, model, opts, 'filter_horizontal', field)
-            if not isinstance(f, models.ManyToManyField):
+            if not isinstance(f, db.ListProperty):
                 raise ImproperlyConfigured("'%s.filter_horizontal[%d]' must be "
-                    "a ManyToManyField." % (cls.__name__, idx))
+                    "a ListProperty." % (cls.__name__, idx))
 
     # radio_fields
     if hasattr(cls, 'radio_fields'):
         check_isdict(cls, 'radio_fields', cls.radio_fields)
         for field, val in cls.radio_fields.items():
             f = get_field(cls, model, opts, 'radio_fields', field)
-            if not (isinstance(f, models.ForeignKey) or f.choices):
+            if not (isinstance(f, db.ReferenceProperty) or f.choices):
                 raise ImproperlyConfigured("'%s.radio_fields['%s']' "
-                        "is neither an instance of ForeignKey nor does "
+                        "is neither an instance of ReferenceProperty nor does "
                         "have choices set." % (cls.__name__, field))
             if not val in (HORIZONTAL, VERTICAL):
                 raise ImproperlyConfigured("'%s.radio_fields['%s']' "
@@ -259,11 +261,11 @@ def validate_base(cls, model):
         check_isdict(cls, 'prepopulated_fields', cls.prepopulated_fields)
         for field, val in cls.prepopulated_fields.items():
             f = get_field(cls, model, opts, 'prepopulated_fields', field)
-            if isinstance(f, (models.DateTimeField, models.ForeignKey,
-                models.ManyToManyField)):
+            if isinstance(f, (db.DateTimeProperty, db.ReferenceProperty,
+                db.ListProperty)):
                 raise ImproperlyConfigured("'%s.prepopulated_fields['%s']' "
-                        "is either a DateTimeField, ForeignKey or "
-                        "ManyToManyField. This isn't allowed."
+                        "is either a DateTimeProperty, ReferenceProperty or "
+                        "ListProperty. This isn't allowed."
                         % (cls.__name__, field))
             check_isseq(cls, "prepopulated_fields['%s']" % field, val)
             for idx, f in enumerate(val):

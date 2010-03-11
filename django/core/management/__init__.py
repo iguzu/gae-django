@@ -19,9 +19,39 @@ def find_commands(management_dir):
     Given a path to a management directory, returns a list of all the command
     names that are available.
 
+    This implementation also works when Django is loaded from a zip file.
+
     Returns an empty list if no commands are defined.
     """
+    zip_marker = '.zip' + os.sep
     command_dir = os.path.join(management_dir, 'commands')
+    if zip_marker not in command_dir:
+        return original_find_commands(command_dir)
+
+    import zipfile
+    # Django is sourced from a zipfile, ask zip module for a list of files.
+    filename, path = command_dir.split(zip_marker)
+    zipinfo = zipfile.ZipFile(filename + '.zip')
+
+    # The zipfile module returns paths in the format of the operating system
+    # that created the zipfile! This may not match the path to the zipfile
+    # itself. Convert operating system specific characters to '/'.
+    path = path.replace('\\', '/')
+    def _IsCmd(t):
+        """Returns true if t matches the criteria for a command module."""
+        t = t.replace('\\', '/')
+        return t.startswith(path) and not os.path.basename(t).startswith('_') \
+            and t.endswith('.py')
+
+    return [os.path.basename(f)[:-3] for f in zipinfo.namelist() if _IsCmd(f)]
+
+def original_find_commands(command_dir):
+    """
+    Given a path to a management directory, returns a list of all the command
+    names that are available.
+
+    Returns an empty list if no commands are defined.
+    """
     try:
         return [f[:-3] for f in os.listdir(command_dir)
                 if not f.startswith('_') and f.endswith('.py')]
@@ -47,16 +77,8 @@ def find_management_module(app_name):
     # testproject isn't in the path. When looking for the management
     # module, we need look for the case where the project name is part
     # of the app_name but the project directory itself isn't on the path.
-    try:
-        f, path, descr = imp.find_module(part,path)
-    except ImportError,e:
-        if os.path.basename(os.getcwd()) != part:
-            raise e
-
-    while parts:
-        part = parts.pop()
-        f, path, descr = imp.find_module(part, path and [path] or None)
-    return path
+    return os.path.dirname(__import__(app_name + '.management',
+                                      {}, {}, ['']).__file__)
 
 def load_command_class(app_name, name):
     """

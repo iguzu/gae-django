@@ -67,11 +67,7 @@ class Command(BaseCommand):
         # Determine whether the default username is taken, so we don't display
         # it as an option.
         if default_username:
-            try:
-                User.objects.get(username=default_username)
-            except User.DoesNotExist:
-                pass
-            else:
+            if User.all().filter('username =', default_username).count(1):
                 default_username = ''
 
         # Prompt for username/email/password. Enclose this whole thing in a
@@ -85,20 +81,18 @@ class Command(BaseCommand):
                         input_msg = 'Username'
                         if default_username:
                             input_msg += ' (Leave blank to use %r)' % default_username
-                        username = raw_input(input_msg + ': ')
+                        username = raw_input(input_msg + ': ').lower()
                     if default_username and username == '':
                         username = default_username
                     if not RE_VALID_USERNAME.match(username):
                         sys.stderr.write("Error: That username is invalid. Use only letters, digits and underscores.\n")
                         username = None
                         continue
-                    try:
-                        User.objects.get(username=username)
-                    except User.DoesNotExist:
-                        break
-                    else:
+                    if User.all().filter('username =', username).count(1):
                         sys.stderr.write("Error: That username is already taken.\n")
                         username = None
+                    else:
+                        break
             
                 # Get an email
                 while 1:

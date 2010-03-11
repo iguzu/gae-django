@@ -6,11 +6,12 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.admin import widgets
 from django.contrib.admin import helpers
 from django.contrib.admin.util import unquote, flatten_fieldsets, get_deleted_objects, model_ngettext, model_format_dict
+from django.contrib.auth.models import Message
 from django.core.exceptions import PermissionDenied
-from django.db import models, transaction
+from django.db import models
 from django.db.models.fields import BLANK_CHOICE_DASH
 from django.http import Http404, HttpResponse, HttpResponseRedirect
-from django.shortcuts import get_object_or_404, render_to_response
+from django.shortcuts import render_to_response
 from django.utils.datastructures import SortedDict
 from django.utils.functional import update_wrapper
 from django.utils.html import escape
@@ -20,6 +21,9 @@ from django.utils.text import capfirst, get_text_list
 from django.utils.translation import ugettext as _
 from django.utils.translation import ungettext, ugettext_lazy
 from django.utils.encoding import force_unicode
+from google.appengine.ext import db
+from ragendja.dbutils import get_object_or_404
+from copy import deepcopy
 try:
     set
 except NameError:
@@ -36,18 +40,18 @@ class IncorrectLookupParameters(Exception):
 # by adding to ModelAdmin.formfield_overrides.
 
 FORMFIELD_FOR_DBFIELD_DEFAULTS = {
-    models.DateTimeField: {
+    db.DateTimeProperty: {
         'form_class': forms.SplitDateTimeField,
         'widget': widgets.AdminSplitDateTime
     },
-    models.DateField:    {'widget': widgets.AdminDateWidget},
-    models.TimeField:    {'widget': widgets.AdminTimeWidget},
-    models.TextField:    {'widget': widgets.AdminTextareaWidget},
-    models.URLField:     {'widget': widgets.AdminURLFieldWidget},
-    models.IntegerField: {'widget': widgets.AdminIntegerFieldWidget},
-    models.CharField:    {'widget': widgets.AdminTextInputWidget},
+    db.DateProperty:    {'widget': widgets.AdminDateWidget},
+    db.TimeProperty:    {'widget': widgets.AdminTimeWidget},
+    db.TextProperty:    {'widget': widgets.AdminTextareaWidget},
+    db.URLProperty:     {'widget': widgets.AdminURLFieldWidget},
+    db.IntegerProperty: {'widget': widgets.AdminIntegerFieldWidget},
+    db.StringProperty:    {'widget': widgets.AdminTextInputWidget},
     models.ImageField:   {'widget': widgets.AdminFileWidget},
-    models.FileField:    {'widget': widgets.AdminFileWidget},
+    db.BlobProperty:    {'widget': widgets.AdminFileWidget},
 }
 
 
@@ -83,7 +87,7 @@ class BaseModelAdmin(object):
             return self.formfield_for_choice_field(db_field, request, **kwargs)
 
         # ForeignKey or ManyToManyFields
-        if isinstance(db_field, (models.ForeignKey, models.ManyToManyField)):
+        if hasattr(db_field, 'reference_class'):
             # Combine the field kwargs with any options for formfield_overrides.
             # Make sure the passed in **kwargs override anything in
             # formfield_overrides because **kwargs is more specific, and should
@@ -92,9 +96,9 @@ class BaseModelAdmin(object):
                 kwargs = dict(self.formfield_overrides[db_field.__class__], **kwargs)
 
             # Get the correct formfield.
-            if isinstance(db_field, models.ForeignKey):
+            if isinstance(db_field, db.ReferenceProperty):
                 formfield = self.formfield_for_foreignkey(db_field, request, **kwargs)
-            elif isinstance(db_field, models.ManyToManyField):
+            elif isinstance(db_field, db.ListProperty):
                 formfield = self.formfield_for_manytomany(db_field, request, **kwargs)
 
             # For non-raw_id fields, wrap the widget with a wrapper that adds
@@ -111,6 +115,8 @@ class BaseModelAdmin(object):
         for klass in db_field.__class__.mro():
             if klass in self.formfield_overrides:
                 kwargs = dict(self.formfield_overrides[klass], **kwargs)
+                if getattr(db_field, 'multiline', False):
+                    kwargs['widget'] = widgets.AdminTextareaWidget
                 return db_field.formfield(**kwargs)
 
         # For any other type of field, just call its formfield() method.
@@ -309,11 +315,11 @@ class ModelAdmin(BaseModelAdmin):
         Returns a QuerySet of all model instances that can be edited by the
         admin site. This is used by changelist_view.
         """
-        qs = self.model._default_manager.get_query_set()
+        qs = self.model.all()
         # TODO: this should be handled by some parameter to the ChangeList.
-        ordering = self.ordering or () # otherwise we might try to *None, which is bad ;)
-        if ordering:
-            qs = qs.order_by(*ordering)
+        if self.ordering:
+            for order in self.ordering:
+                qs.order(order)
         return qs
 
     def get_fieldsets(self, request, obj=None):
@@ -405,7 +411,7 @@ class ModelAdmin(BaseModelAdmin):
             change_message  = message
         )
 
-    def log_deletion(self, request, object, object_repr):
+    def log_deletion(self, request, object_id, object_repr):
         """
         Log that an object has been successfully deleted. Note that since the
         object is deleted, it might no longer be safe to call *any* methods
@@ -417,7 +423,7 @@ class ModelAdmin(BaseModelAdmin):
         LogEntry.objects.log_action(
             user_id         = request.user.id,
             content_type_id = ContentType.objects.get_for_model(self.model).pk,
-            object_id       = object.pk,
+            object_id       = object_id,
             object_repr     = object_repr,
             action_flag     = DELETION
         )
@@ -541,7 +547,7 @@ class ModelAdmin(BaseModelAdmin):
         Send a message to the user. The default implementation
         posts a message using the auth Message object.
         """
-        request.user.message_set.create(message=message)
+        Message(user=request.user, message=message).put()
 
     def save_form(self, request, form, change):
         """
@@ -691,7 +697,7 @@ class ModelAdmin(BaseModelAdmin):
             if not selected:
                 return None
 
-            response = func(self, request, queryset.filter(pk__in=selected))
+            response = func(self, request, db.get(selected))
 
             # Actions may return an HttpResponse, which will be used as the
             # response from the POST. If not, we'll be a good little HTTP
@@ -718,7 +724,7 @@ class ModelAdmin(BaseModelAdmin):
                 new_object = self.save_form(request, form, change=False)
             else:
                 form_validated = False
-                new_object = self.model()
+                new_object = None
             prefixes = {}
             for FormSet in self.get_formsets(request):
                 prefix = FormSet.get_default_prefix()
@@ -747,7 +753,7 @@ class ModelAdmin(BaseModelAdmin):
                     f = opts.get_field(k)
                 except models.FieldDoesNotExist:
                     continue
-                if isinstance(f, models.ManyToManyField):
+                if isinstance(f, db.ListProperty):
                     initial[k] = initial[k].split(",")
             form = ModelForm(initial=initial)
             prefixes = {}
@@ -756,7 +762,7 @@ class ModelAdmin(BaseModelAdmin):
                 prefixes[prefix] = prefixes.get(prefix, 0) + 1
                 if prefixes[prefix] != 1:
                     prefix = "%s-%s" % (prefix, prefixes[prefix])
-                formset = FormSet(instance=self.model(), prefix=prefix)
+                formset = FormSet(prefix=prefix)
                 formsets.append(formset)
 
         adminForm = helpers.AdminForm(form, list(self.get_fieldsets(request)), self.prepopulated_fields)
@@ -782,16 +788,14 @@ class ModelAdmin(BaseModelAdmin):
         }
         context.update(extra_context or {})
         return self.render_change_form(request, context, form_url=form_url, add=True)
-    add_view = transaction.commit_on_success(add_view)
 
     def change_view(self, request, object_id, extra_context=None):
         "The 'change' admin view for this model."
         model = self.model
         opts = model._meta
 
-        try:
-            obj = self.queryset(request).get(pk=unquote(object_id))
-        except model.DoesNotExist:
+        obj = model.get(unquote(object_id))
+        if not obj:
             # Don't raise Http404 just yet, because we haven't checked
             # permissions yet. We don't want an unauthenticated user to be able
             # to determine whether a given object exists.
@@ -871,7 +875,6 @@ class ModelAdmin(BaseModelAdmin):
         }
         context.update(extra_context or {})
         return self.render_change_form(request, context, change=True, obj=obj)
-    change_view = transaction.commit_on_success(change_view)
 
     def changelist_view(self, request, extra_context=None):
         "The 'change list' admin view for this model."
@@ -990,9 +993,8 @@ class ModelAdmin(BaseModelAdmin):
         opts = self.model._meta
         app_label = opts.app_label
 
-        try:
-            obj = self.queryset(request).get(pk=unquote(object_id))
-        except self.model.DoesNotExist:
+        obj = self.model.get(object_id)
+        if not obj:
             # Don't raise Http404 just yet, because we haven't checked
             # permissions yet. We don't want an unauthenticated user to be able
             # to determine whether a given object exists.
@@ -1014,7 +1016,7 @@ class ModelAdmin(BaseModelAdmin):
             if perms_needed:
                 raise PermissionDenied
             obj_display = force_unicode(obj)
-            self.log_deletion(request, obj, obj_display)
+            self.log_deletion(request, object_id, obj_display)
             obj.delete()
 
             self.message_user(request, _('The %(name)s "%(obj)s" was deleted successfully.') % {'name': force_unicode(opts.verbose_name), 'obj': force_unicode(obj_display)})
@@ -1047,12 +1049,11 @@ class ModelAdmin(BaseModelAdmin):
         model = self.model
         opts = model._meta
         app_label = opts.app_label
-        action_list = LogEntry.objects.filter(
-            object_id = object_id,
-            content_type__id__exact = ContentType.objects.get_for_model(model).id
-        ).select_related().order_by('action_time')
+        action_list = LogEntry.all().filter('object_id =', object_id).filter(
+            'content_type =', ContentType.objects.get_for_model(model).id
+        ).order('action_time').fetch(301)
         # If no history was found, see whether this object even exists.
-        obj = get_object_or_404(model, pk=object_id)
+        obj = get_object_or_404(model, object_id)
         context = {
             'title': _('Change history: %s') % force_unicode(obj),
             'action_list': action_list,

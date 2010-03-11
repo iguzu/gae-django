@@ -122,7 +122,9 @@ def get_deleted_objects(deleted_objects, perms_needed, user, obj, opts, current_
                 get_deleted_objects(deleted_objects, perms_needed, user, sub_obj, related.opts, current_depth+2, admin_site)
         else:
             has_related_objs = False
-            for sub_obj in getattr(obj, rel_opts_name).all():
+            entities = getattr(obj, rel_opts_name,
+                related.model.all().filter(related.field.name + ' =', obj))
+            for sub_obj in entities.fetch(200):
                 has_related_objs = True
                 if not has_admin:
                     # Don't display link to edit, because it either has no
@@ -156,12 +158,13 @@ def get_deleted_objects(deleted_objects, perms_needed, user, obj, opts, current_
 
         # related.get_accessor_name() could return None for symmetrical relationships
         if rel_opts_name:
-            rel_objs = getattr(obj, rel_opts_name, None)
-            if rel_objs:
+            rel_objs = getattr(obj, rel_opts_name,
+                related.model.all().filter(related.field.name + ' =', obj))
+            if not getattr(related.field, 'symmetric', False):
                 has_related_objs = True
 
         if has_related_objs:
-            for sub_obj in rel_objs.all():
+            for sub_obj in rel_objs.fetch(100):
                 if not has_admin:
                     # Don't display link to edit, because it either has no
                     # admin or is edited inline.

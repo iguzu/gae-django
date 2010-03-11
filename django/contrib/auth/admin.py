@@ -1,18 +1,18 @@
 from django import template
+from django.contrib.auth.models import User, Group, Message
 from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.forms import UserCreationForm, UserChangeForm, AdminPasswordChangeForm
-from django.contrib.auth.models import User, Group
 from django.core.exceptions import PermissionDenied
 from django.http import HttpResponseRedirect, Http404
-from django.shortcuts import render_to_response, get_object_or_404
+from django.shortcuts import render_to_response
 from django.template import RequestContext
 from django.utils.html import escape
 from django.utils.translation import ugettext, ugettext_lazy as _
+from ragendja.dbutils import get_object_or_404
 
 class GroupAdmin(admin.ModelAdmin):
     search_fields = ('name',)
-    ordering = ('name',)
     filter_horizontal = ('permissions',)
 
 class UserAdmin(admin.ModelAdmin):
@@ -29,7 +29,6 @@ class UserAdmin(admin.ModelAdmin):
     list_display = ('username', 'email', 'first_name', 'last_name', 'is_staff')
     list_filter = ('is_staff', 'is_superuser', 'is_active')
     search_fields = ('username', 'first_name', 'last_name', 'email')
-    ordering = ('username',)
     filter_horizontal = ('user_permissions',)
 
     def __call__(self, request, url):
@@ -67,12 +66,12 @@ class UserAdmin(admin.ModelAdmin):
                 msg = _('The %(name)s "%(obj)s" was added successfully.') % {'name': 'user', 'obj': new_user}
                 self.log_addition(request, new_user)
                 if "_addanother" in request.POST:
-                    request.user.message_set.create(message=msg)
+                    Message(user=request.user, message=msg).put()
                     return HttpResponseRedirect(request.path)
                 elif '_popup' in request.REQUEST:
                     return self.response_add(request, new_user)
                 else:
-                    request.user.message_set.create(message=msg + ' ' + ugettext("You may edit it again below."))
+                    Message(user=request.user, message=msg + ' ' + ugettext("You may edit it again below.")).put()
                     return HttpResponseRedirect('../%s/' % new_user.id)
         else:
             form = self.add_form()
@@ -98,13 +97,13 @@ class UserAdmin(admin.ModelAdmin):
     def user_change_password(self, request, id):
         if not self.has_change_permission(request):
             raise PermissionDenied
-        user = get_object_or_404(self.model, pk=id)
+        user = get_object_or_404(self.model, id)
         if request.method == 'POST':
             form = self.change_password_form(user, request.POST)
             if form.is_valid():
                 new_user = form.save()
                 msg = ugettext('Password changed successfully.')
-                request.user.message_set.create(message=msg)
+                Message(user=request.user, message=msg).put()
                 return HttpResponseRedirect('..')
         else:
             form = self.change_password_form(user)
@@ -125,6 +124,12 @@ class UserAdmin(admin.ModelAdmin):
         }, context_instance=RequestContext(request))
 
 
-admin.site.register(Group, GroupAdmin)
-admin.site.register(User, UserAdmin)
+# ragendja extension: support for overriding user admin
+module = None
+AUTH_ADMIN_MODULE = getattr(settings, 'AUTH_ADMIN_MODULE', None)
+if AUTH_ADMIN_MODULE:
+    module = __import__(AUTH_ADMIN_MODULE, {}, {}, [''])
+
+admin.site.register(Group, getattr(module, 'GroupAdmin', GroupAdmin))
+admin.site.register(User, getattr(module, 'UserAdmin', UserAdmin))
 

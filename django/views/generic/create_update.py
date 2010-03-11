@@ -2,10 +2,14 @@ from django.forms.models import ModelFormMetaclass, ModelForm
 from django.template import RequestContext, loader
 from django.http import Http404, HttpResponse, HttpResponseRedirect
 from django.core.xheaders import populate_xheaders
-from django.core.exceptions import ObjectDoesNotExist, ImproperlyConfigured
+from django.core.exceptions import ImproperlyConfigured
 from django.utils.translation import ugettext
 from django.contrib.auth.views import redirect_to_login
 from django.views.generic import GenericViewError
+
+from django.contrib.auth.models import Message
+from copy import deepcopy
+from google.appengine.ext import db
 
 
 def apply_extra_context(extra_context, context):
@@ -59,7 +63,9 @@ def redirect(post_save_redirect, obj):
     ``create_object`` and ``update_object`` views.
     """
     if post_save_redirect:
-        return HttpResponseRedirect(post_save_redirect % obj.__dict__)
+        return HttpResponseRedirect(post_save_redirect % dict(obj.__dict__,
+            key=str(obj.key()), key_name=obj.key().name(),
+            key_id=obj.key().id()))
     elif hasattr(obj, 'get_absolute_url'):
         return HttpResponseRedirect(obj.get_absolute_url())
     else:
@@ -68,27 +74,47 @@ def redirect(post_save_redirect, obj):
             " parameter to the generic view or define a get_absolute_url"
             " method on the Model.")
 
-def lookup_object(model, object_id, slug, slug_field):
+def lookup_object(model, object_id, slug, slug_field, queryset=None):
     """
     Return the ``model`` object with the passed ``object_id``.  If
     ``object_id`` is None, then return the object whose ``slug_field``
     equals the passed ``slug``.  If ``slug`` and ``slug_field`` are not passed,
     then raise Http404 exception.
     """
-    lookup_kwargs = {}
+    # GAE: Here is the ugly part: We assume that if an object_id is given it
+    # must be a key or id or key name for use with get()/get_by_*().
+    # In this case we just ignore the query. If slug is given we use the query.
     if object_id:
-        lookup_kwargs['%s__exact' % model._meta.pk.name] = object_id
+        # GAE: First try to use a key id or name. While keys may be used in
+        # URLs they expose implementation details (app name, entities, and
+        # groups) which might not be desired.
+        try:
+            key_id = int(object_id)
+        except:
+            obj = None
+        else:
+            obj = model.get_by_id(key_id)
+        if not obj:
+            try:
+                if not isinstance(object_id, db.Key):
+                    object_id = db.Key(object_id)
+            except:
+                obj = model.get_by_key_name(object_id)
+            else:
+                obj = model.get(object_id)
     elif slug and slug_field:
-        lookup_kwargs['%s__exact' % slug_field] = slug
+        if queryset is None:
+            queryset = model.all()
+        else:
+            queryset = deepcopy(queryset)
+        obj = queryset.filter(slug_field + ' =', slug).get()
     else:
         raise GenericViewError(
             "Generic view must be called with either an object_id or a"
             " slug/slug_field.")
-    try:
-        return model.objects.get(**lookup_kwargs)
-    except ObjectDoesNotExist:
-        raise Http404("No %s found for %s"
-                      % (model._meta.verbose_name, lookup_kwargs))
+    if not obj:
+        raise Http404, "No %s found matching the query" % (model._meta.verbose_name)
+    return obj
 
 def create_object(request, model=None, template_name=None,
         template_loader=loader, extra_context=None, post_save_redirect=None,
@@ -111,7 +137,7 @@ def create_object(request, model=None, template_name=None,
         if form.is_valid():
             new_object = form.save()
             if request.user.is_authenticated():
-                request.user.message_set.create(message=ugettext("The %(verbose_name)s was created successfully.") % {"verbose_name": model._meta.verbose_name})
+                Message(user=request.user, message=ugettext("The %(verbose_name)s was created successfully.") % {"verbose_name": model._meta.verbose_name}).put()
             return redirect(post_save_redirect, new_object)
     else:
         form = form_class()
@@ -153,7 +179,7 @@ def update_object(request, model=None, object_id=None, slug=None,
         if form.is_valid():
             obj = form.save()
             if request.user.is_authenticated():
-                request.user.message_set.create(message=ugettext("The %(verbose_name)s was updated successfully.") % {"verbose_name": model._meta.verbose_name})
+                Message(user=request.user, message=ugettext("The %(verbose_name)s was updated successfully.") % {"verbose_name": model._meta.verbose_name}).put()
             return redirect(post_save_redirect, obj)
     else:
         form = form_class(instance=obj)
@@ -167,7 +193,7 @@ def update_object(request, model=None, object_id=None, slug=None,
     }, context_processors)
     apply_extra_context(extra_context, c)
     response = HttpResponse(t.render(c))
-    populate_xheaders(request, response, model, getattr(obj, obj._meta.pk.attname))
+    populate_xheaders(request, response, model, obj.key())
     return response
 
 def delete_object(request, model, post_delete_redirect, object_id=None,
@@ -195,7 +221,7 @@ def delete_object(request, model, post_delete_redirect, object_id=None,
     if request.method == 'POST':
         obj.delete()
         if request.user.is_authenticated():
-            request.user.message_set.create(message=ugettext("The %(verbose_name)s was deleted.") % {"verbose_name": model._meta.verbose_name})
+            Message(user=request.user, message=ugettext("The %(verbose_name)s was deleted.") % {"verbose_name": model._meta.verbose_name}).put()
         return HttpResponseRedirect(post_delete_redirect)
     else:
         if not template_name:
@@ -206,5 +232,5 @@ def delete_object(request, model, post_delete_redirect, object_id=None,
         }, context_processors)
         apply_extra_context(extra_context, c)
         response = HttpResponse(t.render(c))
-        populate_xheaders(request, response, model, getattr(obj, obj._meta.pk.attname))
+        populate_xheaders(request, response, model, obj.key())
         return response

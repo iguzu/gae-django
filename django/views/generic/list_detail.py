@@ -2,7 +2,7 @@ from django.template import loader, RequestContext
 from django.http import Http404, HttpResponse
 from django.core.xheaders import populate_xheaders
 from django.core.paginator import Paginator, InvalidPage
-from django.core.exceptions import ObjectDoesNotExist
+from django.views.generic.create_update import lookup_object
 
 def object_list(request, queryset, paginate_by=None, page=None,
         allow_empty=True, template_name=None, template_loader=loader,
@@ -43,7 +43,6 @@ def object_list(request, queryset, paginate_by=None, page=None,
             A list of the page numbers (1-indexed).
     """
     if extra_context is None: extra_context = {}
-    queryset = queryset._clone()
     if paginate_by:
         paginator = Paginator(queryset, paginate_by, allow_empty_first_page=allow_empty)
         if not page:
@@ -82,7 +81,8 @@ def object_list(request, queryset, paginate_by=None, page=None,
         }, context_processors)
     else:
         c = RequestContext(request, {
-            '%s_list' % template_object_name: queryset,
+            # GAE: Limit number of results, so there are no timeouts
+            '%s_list' % template_object_name: queryset.fetch(301),
             'paginator': None,
             'page_obj': None,
             'is_paginated': False,
@@ -115,16 +115,7 @@ def object_detail(request, queryset, object_id=None, slug=None,
     """
     if extra_context is None: extra_context = {}
     model = queryset.model
-    if object_id:
-        queryset = queryset.filter(pk=object_id)
-    elif slug and slug_field:
-        queryset = queryset.filter(**{slug_field: slug})
-    else:
-        raise AttributeError, "Generic detail view must be called with either an object_id or a slug/slug_field."
-    try:
-        obj = queryset.get()
-    except ObjectDoesNotExist:
-        raise Http404, "No %s found matching the query" % (model._meta.verbose_name)
+    obj = lookup_object(model, object_id, slug, slug_field, queryset)
     if not template_name:
         template_name = "%s/%s_detail.html" % (model._meta.app_label, model._meta.object_name.lower())
     if template_name_field:
@@ -141,5 +132,5 @@ def object_detail(request, queryset, object_id=None, slug=None,
         else:
             c[key] = value
     response = HttpResponse(t.render(c), mimetype=mimetype)
-    populate_xheaders(request, response, model, getattr(obj, obj._meta.pk.name))
+    populate_xheaders(request, response, model, obj.key())
     return response

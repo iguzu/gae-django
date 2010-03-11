@@ -3,7 +3,6 @@ from django import http, template
 from django.contrib.admin import ModelAdmin
 from django.contrib.admin import actions
 from django.contrib.auth import authenticate, login
-from django.db.models.base import ModelBase
 from django.core.exceptions import ImproperlyConfigured
 from django.core.urlresolvers import reverse
 from django.shortcuts import render_to_response
@@ -13,6 +12,7 @@ from django.utils.text import capfirst
 from django.utils.translation import ugettext_lazy, ugettext as _
 from django.views.decorators.cache import never_cache
 from django.conf import settings
+from google.appengine.ext import db
 try:
     set
 except NameError:
@@ -71,7 +71,7 @@ class AdminSite(object):
         else:
             validate = lambda model, adminclass: None
 
-        if isinstance(model_or_iterable, ModelBase):
+        if isinstance(model_or_iterable, db.PropertiedClass):
             model_or_iterable = [model_or_iterable]
         for model in model_or_iterable:
             if model in self._registry:
@@ -98,7 +98,7 @@ class AdminSite(object):
 
         If a model isn't already registered, this will raise NotRegistered.
         """
-        if isinstance(model_or_iterable, ModelBase):
+        if isinstance(model_or_iterable, db.PropertiedClass):
             model_or_iterable = [model_or_iterable]
         for model in model_or_iterable:
             if model not in self._registry:
@@ -302,11 +302,11 @@ class AdminSite(object):
             message = ERROR_MESSAGE
             if u'@' in username:
                 # Mistakenly entered e-mail address instead of username? Look it up.
-                try:
-                    user = User.objects.get(email=username)
-                except (User.DoesNotExist, User.MultipleObjectsReturned):
+                users = User.all().filter('email =', username).fetch(2)
+                if not users or len(users) > 1:
                     message = _("Usernames cannot contain the '@' character.")
                 else:
+                    user = users[0]
                     if user.check_password(password):
                         message = _("Your e-mail address is not your username."
                                     " Try '%s' instead.") % user.username

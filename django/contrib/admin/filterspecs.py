@@ -12,6 +12,7 @@ from django.utils.translation import ugettext as _
 from django.utils.html import escape
 from django.utils.safestring import mark_safe
 import datetime
+from google.appengine.ext import db
 
 class FilterSpec(object):
     filter_specs = []
@@ -54,11 +55,11 @@ class FilterSpec(object):
 class RelatedFilterSpec(FilterSpec):
     def __init__(self, f, request, params, model, model_admin):
         super(RelatedFilterSpec, self).__init__(f, request, params, model, model_admin)
-        if isinstance(f, models.ManyToManyField):
+        if isinstance(f, db.ListProperty) and hasattr(f, 'reference_class'):
             self.lookup_title = f.rel.to._meta.verbose_name
         else:
             self.lookup_title = f.verbose_name
-        rel_name = f.rel.get_related_field().name
+        rel_name = 'key'
         self.lookup_kwarg = '%s__%s__exact' % (f.name, rel_name)
         self.lookup_val = request.GET.get(self.lookup_kwarg, None)
         self.lookup_choices = f.get_choices(include_blank=False)
@@ -107,7 +108,7 @@ class DateFieldFilterSpec(FilterSpec):
 
         today = datetime.date.today()
         one_week_ago = today - datetime.timedelta(days=7)
-        today_str = isinstance(self.field, models.DateTimeField) and today.strftime('%Y-%m-%d 23:59:59') or today.strftime('%Y-%m-%d')
+        today_str = isinstance(self.field, db.DateTimeProperty) and today.strftime('%Y-%m-%d 23:59:59') or today.strftime('%Y-%m-%d')
 
         self.links = (
             (_('Any date'), {}),
@@ -130,7 +131,7 @@ class DateFieldFilterSpec(FilterSpec):
                    'query_string': cl.get_query_string(param_dict, [self.field_generic]),
                    'display': title}
 
-FilterSpec.register(lambda f: isinstance(f, models.DateField), DateFieldFilterSpec)
+FilterSpec.register(lambda f: isinstance(f, db.DateProperty), DateFieldFilterSpec)
 
 class BooleanFieldFilterSpec(FilterSpec):
     def __init__(self, f, request, params, model, model_admin):
@@ -148,12 +149,12 @@ class BooleanFieldFilterSpec(FilterSpec):
             yield {'selected': self.lookup_val == v and not self.lookup_val2,
                    'query_string': cl.get_query_string({self.lookup_kwarg: v}, [self.lookup_kwarg2]),
                    'display': k}
-        if isinstance(self.field, models.NullBooleanField):
+        if isinstance(self.field, db.BooleanProperty):
             yield {'selected': self.lookup_val2 == 'True',
                    'query_string': cl.get_query_string({self.lookup_kwarg2: 'True'}, [self.lookup_kwarg]),
                    'display': _('Unknown')}
 
-FilterSpec.register(lambda f: isinstance(f, models.BooleanField) or isinstance(f, models.NullBooleanField), BooleanFieldFilterSpec)
+FilterSpec.register(lambda f: isinstance(f, db.BooleanProperty) or isinstance(f, db.BooleanProperty), BooleanFieldFilterSpec)
 
 # This should be registered last, because it's a last resort. For example,
 # if a field is eligible to use the BooleanFieldFilterSpec, that'd be much
@@ -162,7 +163,7 @@ class AllValuesFilterSpec(FilterSpec):
     def __init__(self, f, request, params, model, model_admin):
         super(AllValuesFilterSpec, self).__init__(f, request, params, model, model_admin)
         self.lookup_val = request.GET.get(f.name, None)
-        self.lookup_choices = model_admin.queryset(request).distinct().order_by(f.name).values(f.name)
+        self.lookup_choices = []
 
     def title(self):
         return self.field.verbose_name

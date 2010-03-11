@@ -5,6 +5,7 @@ from django.db import models
 from django.utils.translation import ugettext_lazy as _
 from django.conf import settings
 from django.utils.hashcompat import md5_constructor
+from google.appengine.ext import db
 
 
 class SessionManager(models.Manager):
@@ -25,7 +26,7 @@ class SessionManager(models.Manager):
         return s
 
 
-class Session(models.Model):
+class Session(db.Model):
     """
     Django provides full support for anonymous sessions. The session
     framework lets you store and retrieve arbitrary data on a
@@ -42,16 +43,15 @@ class Session(models.Model):
     the sessions documentation that is shipped with Django (also available
     on the Django website).
     """
-    session_key = models.CharField(_('session key'), max_length=40,
-                                   primary_key=True)
-    session_data = models.TextField(_('session data'))
-    expire_date = models.DateTimeField(_('expire date'))
+    data = db.BlobProperty()
+    expiry = db.DateTimeProperty()
+
     objects = SessionManager()
 
     class Meta:
-        db_table = 'django_session'
         verbose_name = _('session')
         verbose_name_plural = _('sessions')
+        db_table = 'django_session'
 
     def get_decoded(self):
         encoded_data = base64.decodestring(self.session_data)

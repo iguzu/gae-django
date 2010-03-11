@@ -1,5 +1,6 @@
 from django import template, forms
 from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.auth.models import Message
 from django.template import loader
 from django.shortcuts import render_to_response
 from django.contrib.sites.models import Site
@@ -23,7 +24,7 @@ def template_validator(request):
         form = TemplateValidatorForm(settings_modules, site_list,
                                      data=request.POST)
         if form.is_valid():
-            request.user.message_set.create(message='The template is valid.')
+            Message(user=request.user, message='The template is valid.').put()
     else:
         form = TemplateValidatorForm(settings_modules, site_list)
     return render_to_response('admin/template_validator.html', {

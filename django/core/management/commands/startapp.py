@@ -2,6 +2,7 @@ import os
 
 from django.core.management.base import copy_helper, CommandError, LabelCommand
 from django.utils.importlib import import_module
+import appenginepatcher
 
 class Command(LabelCommand):
     help = "Creates a Django app directory structure for the given app name in the current directory."
@@ -14,6 +15,11 @@ class Command(LabelCommand):
     can_import_settings = False
 
     def handle_label(self, app_name, directory=None, **options):
+        # Temporarily adjust django path to that of appenginepatcher, so we
+        # use our own template
+        import django
+        old_path = django.__path__
+        django.__path__ = appenginepatcher.__path__
         if directory is None:
             directory = os.getcwd()
 
@@ -34,6 +40,7 @@ class Command(LabelCommand):
             raise CommandError("%r conflicts with the name of an existing Python module and cannot be used as an app name. Please try another name." % app_name)
 
         copy_helper(self.style, 'app', app_name, directory, project_name)
+        django.__path__ = old_path
 
 class ProjectCommand(Command):
     help = ("Creates a Django app directory structure for the given app name"
@@ -41,7 +48,6 @@ class ProjectCommand(Command):
 
     def __init__(self, project_directory):
         super(ProjectCommand, self).__init__()
-        self.project_directory = project_directory
 
     def handle_label(self, app_name, **options):
-        super(ProjectCommand, self).handle_label(app_name, self.project_directory, **options)
+        super(ProjectCommand, self).handle_label(app_name, **options)

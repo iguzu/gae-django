@@ -79,4 +79,3 @@ def _rollback_on_exception(**kwargs):
         transaction.rollback_unless_managed()
     except DatabaseError:
         pass
-signals.got_request_exception.connect(_rollback_on_exception)

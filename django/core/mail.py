@@ -4,7 +4,6 @@ Tools for sending email.
 
 import mimetypes
 import os
-import smtplib
 import socket
 import time
 import random
@@ -17,6 +16,8 @@ from email.Utils import formatdate, parseaddr, formataddr
 
 from django.conf import settings
 from django.utils.encoding import smart_str, force_unicode
+
+from google.appengine.api import mail as gmail
 
 # Don't BASE64-encode UTF-8 messages so that we avoid unwanted attention from
 # some spam filters.
@@ -117,44 +118,10 @@ class SMTPConnection(object):
         self.connection = None
 
     def open(self):
-        """
-        Ensures we have a connection to the email server. Returns whether or
-        not a new connection was required (True or False).
-        """
-        if self.connection:
-            # Nothing to do if the connection is already open.
-            return False
-        try:
-            # If local_hostname is not specified, socket.getfqdn() gets used.
-            # For performance, we use the cached FQDN for local_hostname.
-            self.connection = smtplib.SMTP(self.host, self.port,
-                                           local_hostname=DNS_NAME.get_fqdn())
-            if self.use_tls:
-                self.connection.ehlo()
-                self.connection.starttls()
-                self.connection.ehlo()
-            if self.username and self.password:
-                self.connection.login(self.username, self.password)
-            return True
-        except:
-            if not self.fail_silently:
-                raise
+        self.connection = True
 
     def close(self):
-        """Closes the connection to the email server."""
-        try:
-            try:
-                self.connection.quit()
-            except socket.sslerror:
-                # This happens when calling quit() on a TLS connection
-                # sometimes.
-                self.connection.close()
-            except:
-                if self.fail_silently:
-                    return
-                raise
-        finally:
-            self.connection = None
+        pass
 
     def send_messages(self, email_messages):
         """
@@ -178,12 +145,24 @@ class SMTPConnection(object):
 
     def _send(self, email_message):
         """A helper method that does the actual sending."""
-        if not email_message.recipients():
+        if not email_message.to:
             return False
         try:
-            self.connection.sendmail(email_message.from_email,
-                    email_message.recipients(),
-                    email_message.message().as_string())
+            if isinstance(email_message, gmail.EmailMessage):
+                e = message
+            elif isinstance(email_message, EmailMessage):
+                e = gmail.EmailMessage(
+                    sender=smart_str(email_message.from_email),
+                    to=[smart_str(to) for to in email_message.to],
+                    subject=smart_str(email_message.subject),
+                    body=smart_str(email_message.body))
+
+                if email_message.extra_headers.get('Reply-To', None):
+                    e.reply_to = email_message.extra_headers['Reply-To']
+                if email_message.bcc:
+                    e.bcc = list(email_message.bcc)
+                #TODO - add support for html messages and attachments...
+            e.send()
         except:
             if not self.fail_silently:
                 raise
@@ -413,14 +392,17 @@ def mail_admins(subject, message, fail_silently=False):
     """Sends a message to the admins, as defined by the ADMINS setting."""
     if not settings.ADMINS:
         return
-    EmailMessage(settings.EMAIL_SUBJECT_PREFIX + subject, message,
-                 settings.SERVER_EMAIL, [a[1] for a in settings.ADMINS]
-                 ).send(fail_silently=fail_silently)
+    _mail_group(settings.ADMINS, subject, message, fail_silently)
 
 def mail_managers(subject, message, fail_silently=False):
     """Sends a message to the managers, as defined by the MANAGERS setting."""
     if not settings.MANAGERS:
         return
-    EmailMessage(settings.EMAIL_SUBJECT_PREFIX + subject, message,
-                 settings.SERVER_EMAIL, [a[1] for a in settings.MANAGERS]
-                 ).send(fail_silently=fail_silently)
+    _mail_group(settings.MANAGERS, subject, message, fail_silently)
+
+def _mail_group(group, subject, message, fail_silently=False):
+    """Sends a message to an administrative group."""
+    if group:
+        send_mail(settings.EMAIL_SUBJECT_PREFIX + subject, message,
+                  settings.SERVER_EMAIL, [a[1] for a in group],
+                  fail_silently)

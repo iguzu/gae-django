@@ -9,10 +9,27 @@ from django.utils.xmlutils import SimplerXMLGenerator
 from django.utils.encoding import smart_unicode
 from xml.dom import pulldom
 
+from google.appengine.api import datastore_types
+from google.appengine.ext import db
+
+from python import FakeParent, parse_datetime
+
 class Serializer(base.Serializer):
     """
     Serializes a QuerySet to XML.
     """
+
+    def __init__(self, *args, **kwargs):
+        super(Serializer, self).__init__(*args, **kwargs)
+        self._objects = []
+
+    def getvalue(self):
+        """Wrap the serialized objects with XML headers and return."""
+        str = u"""<?xml version="1.0" encoding="utf-8"?>\n"""
+        str += u"""<django-objects version="1.0">\n"""
+        str += u"".join(self._objects)
+        str += u"""</django-objects>"""
+        return str
 
     def indent(self, level):
         if self.options.get('indent', None) is not None:
@@ -35,62 +52,28 @@ class Serializer(base.Serializer):
         self.xml.endDocument()
 
     def start_object(self, obj):
-        """
-        Called as each object is handled.
-        """
-        if not hasattr(obj, "_meta"):
-            raise base.SerializationError("Non-model object (%s) encountered during serialization" % type(obj))
-
-        self.indent(1)
-        self.xml.startElement("object", {
-            "pk"    : smart_unicode(obj._get_pk_val()),
-            "model" : smart_unicode(obj._meta),
-        })
+        """Nothing needs to be done to start an object."""
+        pass
 
     def end_object(self, obj):
+        """Serialize the object to XML and add to the list of objects to output.
+
+        The output of ToXml is manipulated to replace the datastore model name in
+        the "kind" tag with the Django model name (which includes the Django
+        application name) to make importing easier.
         """
-        Called after handling all fields for an object.
-        """
-        self.indent(1)
-        self.xml.endElement("object")
+        xml = obj._entity.ToXml()
+        xml = xml.replace(u"""kind="%s" """ % obj._entity.kind(),
+                                            u"""kind="%s" """ % unicode(obj._meta))
+        self._objects.append(xml)
 
     def handle_field(self, obj, field):
-        """
-        Called to handle each field on an object (except for ForeignKeys and
-        ManyToManyFields)
-        """
-        self.indent(2)
-        self.xml.startElement("field", {
-            "name" : field.name,
-            "type" : field.get_internal_type()
-        })
-
-        # Get a "string version" of the object's data.
-        if getattr(obj, field.name) is not None:
-            self.xml.characters(field.value_to_string(obj))
-        else:
-            self.xml.addQuickElement("None")
-
-        self.xml.endElement("field")
+        """Fields are not handled individually."""
+        pass
 
     def handle_fk_field(self, obj, field):
-        """
-        Called to handle a ForeignKey (we need to treat them slightly
-        differently from regular fields).
-        """
-        self._start_relational_field(field)
-        related = getattr(obj, field.name)
-        if related is not None:
-            if field.rel.field_name == related._meta.pk.name:
-                # Related to remote object via primary key
-                related = related._get_pk_val()
-            else:
-                # Related to remote object via other field
-                related = getattr(related, field.rel.field_name)
-            self.xml.characters(smart_unicode(related))
-        else:
-            self.xml.addQuickElement("None")
-        self.xml.endElement("field")
+        """Fields are not handled individually."""
+        pass
 
     def handle_m2m_field(self, obj, field):
         """
@@ -125,59 +108,70 @@ class Deserializer(base.Deserializer):
         self.event_stream = pulldom.parse(self.stream)
 
     def next(self):
+        """Replacement next method to look for 'entity'.
+
+        The default next implementation exepects 'object' nodes which is not
+        what the entity's ToXml output provides.
+        """
         for event, node in self.event_stream:
-            if event == "START_ELEMENT" and node.nodeName == "object":
+            if event == "START_ELEMENT" and node.nodeName == "entity":
                 self.event_stream.expandNode(node)
                 return self._handle_object(node)
         raise StopIteration
 
     def _handle_object(self, node):
-        """
-        Convert an <object> node to a DeserializedObject.
-        """
-        # Look up the model using the model loading mechanism. If this fails,
-        # bail.
-        Model = self._get_model_from_node(node, "model")
-
-        # Start building a data dictionary from the object.  If the node is
-        # missing the pk attribute, bail.
-        pk = node.getAttribute("pk")
-        if not pk:
-            raise base.DeserializationError("<object> node is missing the 'pk' attribute")
-
-        data = {Model._meta.pk.attname : Model._meta.pk.to_python(pk)}
-
-        # Also start building a dict of m2m data (this is saved as
-        # {m2m_accessor_attribute : [list_of_related_objects]})
+        """Convert an <entity> node to a DeserializedObject"""
+        Model = self._get_model_from_node(node, "kind")
+        data = {}
+        key = db.Key(node.getAttribute("key"))
+        if key.name():
+            data["key_name"] = key.name()
+        parent = None
+        if key.parent():
+            parent = FakeParent(key.parent())
         m2m_data = {}
 
         # Deseralize each field.
-        for field_node in node.getElementsByTagName("field"):
+        for field_node in node.getElementsByTagName("property"):
             # If the field is missing the name attribute, bail (are you
             # sensing a pattern here?)
             field_name = field_node.getAttribute("name")
             if not field_name:
-                raise base.DeserializationError("<field> node is missing the 'name' attribute")
+                    raise base.DeserializationError("<field> node is missing the 'name' "
+                                                                                    "attribute")
+            field = Model.properties()[field_name]
+            field_value = getInnerText(field_node).strip()
+            field_type = field_node.getAttribute('type')
+            if not field_value:
+                field_value = None
+            if field_type == 'int':
+                field_value = int(field_value)
+            elif field_type == 'gd:when':
+                field_value = parse_datetime(field_value)
 
-            # Get the field from the Model. This will raise a
-            # FieldDoesNotExist if, well, the field doesn't exist, which will
-            # be propagated correctly.
-            field = Model._meta.get_field(field_name)
-
-            # As is usually the case, relation fields get the special treatment.
-            if field.rel and isinstance(field.rel, models.ManyToManyRel):
-                m2m_data[field.name] = self._handle_m2m_field_node(field_node, field)
-            elif field.rel and isinstance(field.rel, models.ManyToOneRel):
-                data[field.attname] = self._handle_fk_field_node(field_node, field)
+            if isinstance(field, db.ReferenceProperty):
+                m = re.match("tag:.*\[(.*)\]", field_value)
+                if not m:
+                    raise base.DeserializationError(u"Invalid reference value: '%s'" %
+                                                                                    field_value)
+                key = m.group(1)
+                key_obj = db.Key(key)
+                if not key_obj.name():
+                    raise base.DeserializationError(u"Cannot load Reference with "
+                                                                                    "unnamed key: '%s'" % field_value)
+                data[field.name] = key_obj
             else:
-                if field_node.getElementsByTagName('None'):
-                    value = None
-                else:
-                    value = field.to_python(getInnerText(field_node).strip())
-                data[field.name] = value
+                data[field.name] = field.validate(field_value)
 
-        # Return a DeserializedObject so that the m2m data has a place to live.
-        return base.DeserializedObject(Model(**data), m2m_data)
+        # Create the new model instance with all it's data, but no parent.
+        object = Model(**data)
+        # Now add the parent into the hidden attribute, bypassing the type checks
+        # in the Model's __init__ routine.
+        object._parent = parent
+        # When the deserialized object is saved our replacement DeserializedObject
+        # class will set object._parent to force the real parent model to be loaded
+        # the first time it is referenced.
+        return base.DeserializedObject(object, m2m_data)
 
     def _handle_fk_field_node(self, node, field):
         """
@@ -233,4 +227,3 @@ def getInnerText(node):
         else:
            pass
     return u"".join(inner_text)
-

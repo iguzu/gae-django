@@ -39,7 +39,7 @@ def ensure_default_manager(sender, **kwargs):
                     return
             raise AssertionError("Should never get here. Please report a bug, including your model and model manager setup.")
 
-signals.class_prepared.connect(ensure_default_manager)
+#GAE(not supported): signals.class_prepared.connect(ensure_default_manager)
 
 class Manager(object):
     # Tracks each time a Manager instance is created. Used to retain order.

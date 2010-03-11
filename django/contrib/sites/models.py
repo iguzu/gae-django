@@ -1,4 +1,5 @@
 from django.db import models
+from google.appengine.ext import db
 from django.utils.translation import ugettext_lazy as _
 
 SITE_CACHE = {}
@@ -19,7 +20,7 @@ class SiteManager(models.Manager):
         try:
             current_site = SITE_CACHE[sid]
         except KeyError:
-            current_site = self.get(pk=sid)
+            current_site = Site.get(sid)
             SITE_CACHE[sid] = current_site
         return current_site
 
@@ -28,25 +29,24 @@ class SiteManager(models.Manager):
         global SITE_CACHE
         SITE_CACHE = {}
 
-class Site(models.Model):
-    domain = models.CharField(_('domain name'), max_length=100)
-    name = models.CharField(_('display name'), max_length=50)
+class Site(db.Model):
+    domain = db.StringProperty(verbose_name=_('domain name'), required=True)
+    name = db.StringProperty(verbose_name=_('display name'), required=True)
     objects = SiteManager()
 
     class Meta:
         db_table = 'django_site'
         verbose_name = _('site')
         verbose_name_plural = _('sites')
-        ordering = ('domain',)
 
     def __unicode__(self):
         return self.domain
 
-    def save(self, *args, **kwargs):
-        super(Site, self).save(*args, **kwargs)
+    def put(self, *args, **kwargs):
+        super(Site, self).put(*args, **kwargs)
         # Cached information will likely be incorrect now.
-        if self.id in SITE_CACHE:
-            del SITE_CACHE[self.id]
+        if self.pk in SITE_CACHE:
+            del SITE_CACHE[self.pk]
 
     def delete(self):
         pk = self.pk

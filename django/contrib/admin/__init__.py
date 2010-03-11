@@ -49,10 +49,16 @@ def autodiscover():
         try:
             imp.find_module('admin', app_path)
         except ImportError:
-            continue
+            # GAE: we patch find_module to always raise ImportError
+            # continue
+            pass
 
         # Step 3: import the app's admin file. If this has errors we want them
         # to bubble up.
-        import_module("%s.admin" % app)
+        # GAE: work around find_module hack
+        try:
+            import_module("%s.admin" % app)
+        except ImportError:
+            pass
     # autodiscover was successful, reset loading flag.
     LOADING = False

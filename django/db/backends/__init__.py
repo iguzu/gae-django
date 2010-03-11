@@ -1,4 +1,6 @@
 try:
+    # GAE: threading.local doesn't work correctly :(
+    raise ImportError
     # Only exists in Python 2.4+
     from threading import local
 except ImportError:
