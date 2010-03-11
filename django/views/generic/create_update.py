@@ -136,8 +136,9 @@ def create_object(request, model=None, template_name=None,
         form = form_class(request.POST, request.FILES)
         if form.is_valid():
             new_object = form.save()
-            if request.user.is_authenticated():
-                Message(user=request.user, message=ugettext("The %(verbose_name)s was created successfully.") % {"verbose_name": model._meta.verbose_name}).put()
+            msg = ugettext("The %(verbose_name)s was created successfully.") %\
+                                    {"verbose_name": model._meta.verbose_name}
+            messages.success(request, msg, fail_silently=True)
             return redirect(post_save_redirect, new_object)
     else:
         form = form_class()
@@ -178,8 +179,9 @@ def update_object(request, model=None, object_id=None, slug=None,
         form = form_class(request.POST, request.FILES, instance=obj)
         if form.is_valid():
             obj = form.save()
-            if request.user.is_authenticated():
-                Message(user=request.user, message=ugettext("The %(verbose_name)s was updated successfully.") % {"verbose_name": model._meta.verbose_name}).put()
+            msg = ugettext("The %(verbose_name)s was updated successfully.") %\
+                                    {"verbose_name": model._meta.verbose_name}
+            messages.success(request, msg, fail_silently=True)
             return redirect(post_save_redirect, obj)
     else:
         form = form_class(instance=obj)
@@ -220,8 +222,9 @@ def delete_object(request, model, post_delete_redirect, object_id=None,
 
     if request.method == 'POST':
         obj.delete()
-        if request.user.is_authenticated():
-            Message(user=request.user, message=ugettext("The %(verbose_name)s was deleted.") % {"verbose_name": model._meta.verbose_name}).put()
+        msg = ugettext("The %(verbose_name)s was deleted.") %\
+                                    {"verbose_name": model._meta.verbose_name}
+        messages.success(request, msg, fail_silently=True)
         return HttpResponseRedirect(post_delete_redirect)
     else:
         if not template_name:
